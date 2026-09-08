@@ -1,0 +1,18 @@
+{
+  "titles": [
+    "Lead Product Manager",
+    "Principal Product Manager",
+    "Director of Product",
+    "Group Product Manager",
+    "Senior Product Manager",
+    "Staff Product Manager",
+    "Product Lead",
+    "Founding Product Manager"
+  ],
+  "sites": ["ashbyhq.com", "jobs.lever.co", "greenhouse.io"],
+  "model": "claude-haiku-4-5-20251001",
+  "locationFilter": {
+    "enabled": true,
+    "allowedCountry": "US"
+  }
+}

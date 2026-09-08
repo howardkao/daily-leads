@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.example.daily-leads.find</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/path/to/daily-leads/run-daily.sh</string>
+    </array>
+
+    <!-- Runs once a day. Pick a time, not on the hour/half-hour. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>7</integer>
+        <key>Minute</key>
+        <integer>17</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/path/to/daily-leads/find-listings.log</string>
+    <key>StandardErrorPath</key>
+    <string>/path/to/daily-leads/find-listings.log</string>
+</dict>
+</plist>

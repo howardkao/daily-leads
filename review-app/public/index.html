@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Leads Review</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header>
+    <h1>Leads Review</h1>
+    <div id="count" class="count"></div>
+    <div id="triage-banner" class="triage-banner" hidden></div>
+    <input id="filter" type="search" placeholder="Filter by title or company…" />
+  </header>
+
+  <details id="triage-queue" hidden>
+    <summary>Triage queue (<span id="triage-queue-count">0</span>)</summary>
+    <div id="triage-queue-list"></div>
+  </details>
+
+  <main id="list"></main>
+
+  <section id="recent">
+    <h2>Recently decided</h2>
+    <div id="recent-list"></div>
+  </section>
+
+  <script src="/app.js"></script>
+</body>
+</html>

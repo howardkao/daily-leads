@@ -1,0 +1,141 @@
+:root {
+  color-scheme: light dark;
+  --bg: #fafaf9;
+  --card: #ffffff;
+  --border: #e5e3df;
+  --text: #1c1b1a;
+  --muted: #71716c;
+  --accent: #2563eb;
+  --green: #15803d;
+  --red: #b91c1c;
+  --amber: #b45309;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  max-width: 780px;
+  margin: 0 auto;
+  padding: 24px 20px 80px;
+}
+
+header {
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  padding: 8px 0 16px;
+  z-index: 5;
+}
+
+h1 { font-size: 20px; margin: 0 0 4px; }
+.count { color: var(--muted); font-size: 13px; margin-bottom: 10px; }
+
+.triage-banner {
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fcd34d;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+
+input#filter {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 14px;
+  background: var(--card);
+  color: var(--text);
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-bottom: 12px;
+}
+
+.card h3 { margin: 0 0 2px; font-size: 15px; }
+.card .meta { color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+.card .meta .known { color: var(--amber); font-weight: 600; }
+.card .snippet { font-size: 13px; color: var(--text); margin-bottom: 10px; line-height: 1.4; }
+.card .snippet.empty { color: var(--muted); font-style: italic; }
+.card a.open-link { font-size: 13px; }
+
+.actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; align-items: center; }
+
+button {
+  font-size: 12px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text);
+  cursor: pointer;
+}
+button:hover { background: var(--bg); }
+button.triage { border-color: var(--green); color: var(--green); }
+button.blacklist { border-color: var(--red); color: var(--red); }
+button.watch { border-color: var(--accent); color: var(--accent); }
+button.quick-btn { border-color: var(--red); color: var(--red); background: color-mix(in srgb, var(--red) 8%, var(--card)); }
+
+.pass-group { position: relative; display: inline-block; }
+.pass-menu {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px;
+  z-index: 10;
+  min-width: 200px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+}
+.pass-menu.open { display: block; }
+.pass-menu button { display: block; width: 100%; text-align: left; border: none; }
+
+.note {
+  width: 100%;
+  margin-top: 8px;
+  font-size: 12px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  resize: vertical;
+}
+
+.other-input { display: none; gap: 6px; margin-top: 6px; }
+.other-input.open { display: flex; }
+.other-input input { flex: 1; font-size: 12px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; }
+
+#recent { margin-top: 32px; border-top: 1px solid var(--border); padding-top: 16px; }
+#recent h2 { font-size: 14px; color: var(--muted); }
+
+#triage-queue { margin-bottom: 24px; }
+#triage-queue summary {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--green);
+  cursor: pointer;
+  padding: 8px 0;
+}
+#triage-queue[open] summary { margin-bottom: 8px; }
+.triage-card { border-color: var(--green); }
+.recent-row { display: flex; justify-content: space-between; align-items: flex-start; font-size: 12px; color: var(--muted); padding: 4px 0; border-bottom: 1px solid var(--border); gap: 8px; }
+.recent-row button { font-size: 11px; padding: 2px 6px; flex-shrink: 0; }
+.triage-path { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+.triage-path code { font-size: 10px; background: var(--bg); padding: 2px 6px; border-radius: 4px; word-break: break-all; }
+
+.empty-state { color: var(--muted); text-align: center; padding: 40px 0; }
