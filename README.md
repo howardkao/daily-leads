@@ -63,12 +63,15 @@ by the free location filter before ever reaching the LLM.
 
 ## Customizing
 
-- **Query scope**: `config.json` — titles, ATS sites, target country,
-  or turn the location filter off entirely.
-- **Auto-filter judgment**: `criteria.md` — free text, read verbatim by
-  the classifier alongside each JD.
-- **Pass reasons** in the review app: edit `REASON_LABELS` in
-  `review-app/server.mjs`.
+Everything user-specific lives in two gitignored files, so you can pull
+updates without ever hitting a merge conflict on your own settings:
+
+- **`config.json`** — target titles, ATS sites, model, target country (or
+  turn the location filter off), pass-reason labels, and `dataDir` (where
+  your ledger lives — handy if you want this checked out inside a larger
+  repo with data kept elsewhere).
+- **`criteria.md`** — free text, read verbatim by the classifier alongside
+  each JD. This is the auto-filter's whole judgment.
 
 ## License
 

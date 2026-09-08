@@ -6,7 +6,7 @@
 //      best-effort keyword heuristic on Greenhouse/Ashby's free-text
 //      location strings -- imperfect, biased toward under- not
 //      over-flagging, so it misses some rather than wrongly rejecting a
-//      real match). Configurable/disable-able in config.json.
+//      real US/remote role).
 //   3. Only if that doesn't already resolve it, one LLM call (thinking
 //      enabled at a small budget -- this needs real judgment, not just
 //      pattern-matching) judges the posting against criteria.md.
@@ -14,20 +14,16 @@
 // separable from your own manual decisions in the review app and
 // auditable later.
 // Every surviving lead also gets its snippet replaced with a real JD
-// excerpt -- Serper's search snippet alone usually isn't enough to judge
-// a posting from.
+// excerpt -- the search snippet alone usually isn't enough to judge from.
 
 import { query } from "@anthropic-ai/claude-agent-sdk";
-import { readFileSync, appendFileSync, existsSync, writeFileSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { readFileSync, appendFileSync, existsSync, writeFileSync, mkdirSync } from "node:fs";
+import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const REPO_ROOT = dirname(fileURLToPath(import.meta.url));
-const CONFIG_FILE = join(REPO_ROOT, "config.json");
-const CRITERIA_FILE = join(REPO_ROOT, "criteria.md");
-const DATA_DIR = join(REPO_ROOT, "data");
-const SEEN_FILE = join(DATA_DIR, "leads-seen.tsv");
-const DECISIONS_FILE = join(DATA_DIR, "lead-decisions.tsv");
+const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
+const CONFIG_FILE = join(SCRIPT_DIR, "config.json");
+const CRITERIA_FILE = join(SCRIPT_DIR, "criteria.md");
 const SEEN_COLUMNS = ["fingerprint", "first_seen", "last_seen", "company", "title", "url", "snippet", "posted_at", "location", "classified_at"];
 const DECISION_COLUMNS = ["fingerprint", "decided_at", "decision", "reason", "note", "company"];
 
@@ -49,7 +45,8 @@ function loadConfig() {
   }
   const config = JSON.parse(readFileSync(CONFIG_FILE, "utf8"));
   config.model ??= "claude-haiku-4-5-20251001";
-  config.locationFilter ??= { enabled: true, allowedCountry: "US", foreignMarkers: DEFAULT_FOREIGN_MARKERS };
+  config.dataDir ??= "data";
+  config.locationFilter ??= { enabled: true, allowedCountry: "US" };
   return config;
 }
 
@@ -59,6 +56,17 @@ function loadCriteria() {
     process.exit(1);
   }
   return readFileSync(CRITERIA_FILE, "utf8").trim();
+}
+
+// dataDir is relative to this script, so the same code works whether the
+// ledger lives in a sibling data/ dir or somewhere else entirely.
+function resolvePaths(config) {
+  const dataDir = resolve(SCRIPT_DIR, config.dataDir);
+  return {
+    dataDir,
+    seen: join(dataDir, "leads-seen.tsv"),
+    decisions: join(dataDir, "lead-decisions.tsv"),
+  };
 }
 
 function readTsv(path, columns) {
@@ -81,10 +89,10 @@ function writeTsv(path, columns, rows) {
   writeFileSync(path, lines.join("\n") + "\n");
 }
 
-function appendDecision(fingerprint, company, decision, reason, note) {
-  if (!existsSync(DECISIONS_FILE)) writeFileSync(DECISIONS_FILE, DECISION_COLUMNS.join("\t") + "\n");
+function appendDecision(decisionsFile, fingerprint, company, decision, reason, note) {
+  if (!existsSync(decisionsFile)) writeFileSync(decisionsFile, DECISION_COLUMNS.join("\t") + "\n");
   appendFileSync(
-    DECISIONS_FILE,
+    decisionsFile,
     [fingerprint, new Date().toISOString(), decision, reason, note || "", company].join("\t") + "\n"
   );
 }
@@ -152,8 +160,7 @@ async function fetchJd(url, locationFilter) {
       text: job.descriptionPlain,
       location: `${job.location || ""} (${job.workplaceType || "?"})`,
       // isRemote is unreliable -- Ashby marks hybrid roles isRemote:true too
-      // (seen in practice: a Milan, Italy hybrid posting). workplaceType is
-      // the real signal.
+      // (e.g. a Milan, Italy hybrid posting). workplaceType is the real signal.
       isForeign: job.workplaceType?.toLowerCase() !== "remote" && markers.some((m) => loc.includes(m)),
     };
   }
@@ -189,9 +196,11 @@ async function main() {
   const limit = Number(process.argv[2]) || Infinity;
   const config = loadConfig();
   const criteria = loadCriteria();
+  const paths = resolvePaths(config);
+  mkdirSync(paths.dataDir, { recursive: true });
 
-  const rows = readTsv(SEEN_FILE, SEEN_COLUMNS);
-  const decided = new Set(readTsv(DECISIONS_FILE, DECISION_COLUMNS).map((d) => d.fingerprint));
+  const rows = readTsv(paths.seen, SEEN_COLUMNS);
+  const decided = new Set(readTsv(paths.decisions, DECISION_COLUMNS).map((d) => d.fingerprint));
   const todo = rows.filter((r) => !r.classified_at && !decided.has(r.fingerprint)).slice(0, limit);
 
   console.log(`${todo.length} lead(s) to classify`);
@@ -218,14 +227,14 @@ async function main() {
       enriched++;
 
       if (config.locationFilter.enabled && jd.isForeign) {
-        appendDecision(row.fingerprint, row.company, "pass", "auto_location_mismatch", `location: ${jd.location}`);
+        appendDecision(paths.decisions, row.fingerprint, row.company, "pass", "auto_location_mismatch", `location: ${jd.location}`);
         locationRejected++;
         outcome = "location mismatch";
       } else {
         llmCalls++;
         const verdict = await classifyFit(jd.text, criteria, config.model);
         if (verdict?.verdict === "mismatch") {
-          appendDecision(row.fingerprint, row.company, "pass", "auto_criteria_mismatch", verdict.reason);
+          appendDecision(paths.decisions, row.fingerprint, row.company, "pass", "auto_criteria_mismatch", verdict.reason);
           criteriaRejected++;
         }
         outcome = verdict?.verdict || "classification failed";
@@ -235,12 +244,12 @@ async function main() {
     // Write after every lead, not just at the end -- a killed/crashed run
     // must not lose enrichment progress. Decisions (appendDecision, above)
     // are already durable independently of this.
-    writeTsv(SEEN_FILE, SEEN_COLUMNS, rows);
+    writeTsv(paths.seen, SEEN_COLUMNS, rows);
     done++;
     console.log(`[${done}/${todo.length}] ${row.company}: ${outcome}`);
   }
 
-  writeTsv(SEEN_FILE, SEEN_COLUMNS, rows);
+  writeTsv(paths.seen, SEEN_COLUMNS, rows);
 
   console.log(`Enriched with real JD/location: ${enriched}`);
   console.log(`Fetch failed (left as-is): ${fetchFailed}`);

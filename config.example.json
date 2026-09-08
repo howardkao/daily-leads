@@ -11,8 +11,25 @@
   ],
   "sites": ["ashbyhq.com", "jobs.lever.co", "greenhouse.io"],
   "model": "claude-haiku-4-5-20251001",
+
+  "//dataDir": "Where the ledger/decisions/blacklist live, relative to this file.",
+  "dataDir": "data",
+
+  "//knownCompaniesFile": "Optional. A markdown file with '- **Company**' bullets; matches get flagged in the UI. null disables it.",
+  "knownCompaniesFile": null,
+
+  "//locationFilter": "Free pre-filter that runs before any LLM call. Set enabled:false to skip it.",
   "locationFilter": {
     "enabled": true,
     "allowedCountry": "US"
+  },
+
+  "reasonLabels": {
+    "pay_too_low": "Pay too low",
+    "location_commute": "Location / commute unreasonable",
+    "mission_misalignment": "Misaligned",
+    "not_pm_role": "Not the right role type",
+    "level_mismatch": "Level mismatch",
+    "other": "Other"
   }
 }

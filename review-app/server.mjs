@@ -9,21 +9,40 @@ import { extname, join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const APP_DIR = dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = resolve(APP_DIR, "..");
+const PROJECT_DIR = resolve(APP_DIR, "..");
 const PUBLIC_DIR = join(APP_DIR, "public");
+const CONFIG_FILE = join(PROJECT_DIR, "config.json");
 const PORT = 3211;
 
-const DATA_DIR = join(REPO_ROOT, "data");
+function loadConfig() {
+  if (!existsSync(CONFIG_FILE)) {
+    console.error(`Missing ${CONFIG_FILE} -- copy config.example.json to config.json and edit it.`);
+    process.exit(1);
+  }
+  const config = JSON.parse(readFileSync(CONFIG_FILE, "utf8"));
+  config.dataDir ??= "data";
+  return config;
+}
+
+// dataDir is relative to the project dir (one level up from this app), so
+// the same code serves a standalone checkout and one nested in a larger repo.
+const CONFIG = loadConfig();
+const DATA_DIR = resolve(PROJECT_DIR, CONFIG.dataDir);
 const SEEN_FILE = join(DATA_DIR, "leads-seen.tsv");
 const DECISIONS_FILE = join(DATA_DIR, "lead-decisions.tsv");
 const BLACKLIST_FILE = join(DATA_DIR, "company-blacklist.md");
 const WATCHLIST_FILE = join(DATA_DIR, "company-watchlist.md");
 const TRIAGE_QUEUE_DIR = join(DATA_DIR, "triage-queue");
+// Optional: a separate file listing companies you're already tracking, used
+// only to flag them in the UI. null/absent disables the flag entirely.
+const KNOWN_COMPANIES_FILE = CONFIG.knownCompaniesFile
+  ? resolve(PROJECT_DIR, CONFIG.knownCompaniesFile)
+  : null;
 
 const SEEN_COLUMNS = ["fingerprint", "first_seen", "last_seen", "company", "title", "url", "snippet", "posted_at", "location", "classified_at"];
 const DECISION_COLUMNS = ["fingerprint", "decided_at", "decision", "reason", "note", "company"];
 
-const REASON_LABELS = {
+const REASON_LABELS = CONFIG.reasonLabels ?? {
   pay_too_low: "Pay too low",
   location_commute: "Location / commute unreasonable",
   mission_misalignment: "Misaligned",
@@ -67,7 +86,7 @@ function readTsv(path, columns) {
 
 function appendTsvRow(path, columns, row) {
   if (!existsSync(path)) writeFileSync(path, columns.join("\t") + "\n");
-  const line = columns.map((c) => String(row[c] ?? "").replace(/\t|\n/g, " ")).join("\t");
+  const line = columns.map((c) => String(row[c] ?? "").replace(/\t|\n/g, " ")) .join("\t");
   appendFileSync(path, line + "\n");
 }
 
@@ -88,6 +107,16 @@ function appendBullet(path, header, name) {
   const sep = text.endsWith("\n") ? "" : "\n";
   appendFileSync(path, `${sep}- ${name}\n`);
   return true;
+}
+
+function loadKnownCompanies() {
+  if (!KNOWN_COMPANIES_FILE || !existsSync(KNOWN_COMPANIES_FILE)) return new Set();
+  const names = new Set();
+  for (const line of readFileSync(KNOWN_COMPANIES_FILE, "utf8").split("\n")) {
+    const m = line.trim().match(/^-\s+\*\*([^*]+)\*\*/);
+    if (m) names.add(normalize(m[1]));
+  }
+  return names;
 }
 
 function fuzzyContains(set, needle) {
@@ -125,9 +154,14 @@ function getLeads() {
   const seen = readTsv(SEEN_FILE, SEEN_COLUMNS);
   const decided = new Set(readTsv(DECISIONS_FILE, DECISION_COLUMNS).map((d) => d.fingerprint));
   const blacklist = loadBulletList(BLACKLIST_FILE);
+  const knownCompanies = loadKnownCompanies();
   const leads = seen
     .filter((row) => !decided.has(row.fingerprint))
-    .filter((row) => !fuzzyContains(blacklist, normalize(row.company)));
+    .filter((row) => !fuzzyContains(blacklist, normalize(row.company)))
+    .map((row) => ({
+      ...row,
+      known: fuzzyContains(knownCompanies, normalize(row.company)),
+    }));
   leads.sort((a, b) => recencyMinutes(a.posted_at) - recencyMinutes(b.posted_at));
   return leads;
 }
@@ -279,8 +313,8 @@ const server = createServer(async (req, res) => {
 
     if (req.method === "POST" && req.url === "/api/triage-done") {
       // Marks a queued triage item done -- removes its file (the discussion
-      // happened elsewhere already) but keeps the "triage" decision itself,
-      // so it stays correctly excluded from "unreviewed".
+      // happened in a separate thread already) but keeps the "triage"
+      // decision itself, so it stays correctly excluded from "unreviewed".
       const { fingerprint } = await readBody(req);
       if (!fingerprint) return sendJson(res, 400, { error: "fingerprint required" });
       const row = readTsv(SEEN_FILE, SEEN_COLUMNS).find((r) => r.fingerprint === fingerprint);
