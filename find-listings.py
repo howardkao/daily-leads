@@ -86,17 +86,22 @@ def normalize(text: str) -> str:
 
 
 def extract_company_slug(url: str) -> str:
-    """Pull the company slug out of the ATS URL path — more reliable than
-    parsing result titles, since all three ATS platforms embed it directly."""
+    """Pull the company slug out of the ATS URL path -- more reliable than
+    parsing result titles, since every supported ATS embeds it directly."""
     parsed = urllib.parse.urlparse(url)
     host = parsed.netloc.lower()
     parts = [p for p in parsed.path.split("/") if p]
 
-    if "lever.co" in host or "ashbyhq.com" in host:
-        # jobs.lever.co/{company}/... , jobs.ashbyhq.com/{company}/...
-        return parts[0] if parts else host
-    if "greenhouse.io" in host:
-        # boards.greenhouse.io/{company}/... , job-boards.greenhouse.io/{company}/...
+    # All supported platforms put the company first in the path:
+    #   jobs.lever.co/{company}/{id}
+    #   jobs.ashbyhq.com/{company}/{id}
+    #   boards.greenhouse.io/{company}/jobs/{id}
+    #   jobs.smartrecruiters.com/{Company}/{id}-{slug}
+    #   apply.workable.com/{account}/j/{code}
+    if any(
+        d in host
+        for d in ("lever.co", "ashbyhq.com", "greenhouse.io", "smartrecruiters.com", "workable.com")
+    ):
         return parts[0] if parts else host
     return host
 

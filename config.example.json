@@ -9,7 +9,7 @@
     "Product Lead",
     "Founding Product Manager"
   ],
-  "sites": ["ashbyhq.com", "jobs.lever.co", "greenhouse.io"],
+  "sites": ["ashbyhq.com", "jobs.lever.co", "greenhouse.io", "jobs.smartrecruiters.com", "apply.workable.com"],
   "model": "claude-haiku-4-5-20251001",
 
   "//dataDir": "Where the ledger/decisions/blacklist live, relative to this file.",

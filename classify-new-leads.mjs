@@ -164,6 +164,45 @@ async function fetchJd(url, locationFilter) {
       isForeign: job.workplaceType?.toLowerCase() !== "remote" && markers.some((m) => loc.includes(m)),
     };
   }
+  if (u.hostname.includes("smartrecruiters.com")) {
+    // jobs.smartrecruiters.com/{Company}/{numericId}-{slug}
+    const company = parts[0];
+    const id = (parts[1] || "").split("-")[0];
+    const res = await fetch(`https://api.smartrecruiters.com/v1/companies/${company}/postings/${id}`);
+    if (!res.ok) return null;
+    const d = await res.json();
+    const sections = d.jobAd?.sections || {};
+    const text = stripHtml(
+      ["companyDescription", "jobDescription", "qualifications", "additionalInformation"]
+        .map((k) => sections[k]?.text || "")
+        .join(" ")
+    );
+    const l = d.location || {};
+    // SmartRecruiters gives structured country/remote/hybrid, so no keyword
+    // guessing needed here -- this is the most reliable location of any ATS.
+    return {
+      text,
+      location: `${l.fullLocation || "?"} (${l.remote ? "remote" : l.hybrid ? "hybrid" : "onsite"})`,
+      isForeign: !!l.country && l.country.toUpperCase() !== allowed && !l.remote,
+    };
+  }
+  if (u.hostname.includes("workable.com")) {
+    // apply.workable.com/{account}/j/{shortcode}
+    const account = parts[0];
+    const shortcode = parts[parts.indexOf("j") + 1] || parts[parts.length - 1];
+    const res = await fetch(`https://apply.workable.com/api/v2/accounts/${account}/jobs/${shortcode}`, {
+      headers: { Accept: "application/json" },
+    });
+    if (!res.ok) return null;
+    const d = await res.json();
+    const text = stripHtml([d.description, d.requirements, d.benefits].filter(Boolean).join(" "));
+    const code = d.location?.countryCode || "";
+    return {
+      text,
+      location: `${[d.location?.city, d.location?.country].filter(Boolean).join(", ") || "?"} (${d.remote ? "remote" : "onsite"})`,
+      isForeign: !!code && code.toUpperCase() !== allowed && !d.remote,
+    };
+  }
   return null;
 }
 
