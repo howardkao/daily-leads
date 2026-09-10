@@ -28,13 +28,19 @@ const SEEN_COLUMNS = ["fingerprint", "first_seen", "last_seen", "company", "titl
 const DECISION_COLUMNS = ["fingerprint", "decided_at", "decision", "reason", "note", "company"];
 
 const DEFAULT_FOREIGN_MARKERS = [
-  "india", "bangalore", "mumbai", "delhi", "hyderabad", "pune",
+  "india", "bangalore", "bengaluru", "mumbai", "delhi", "hyderabad", "pune",
+  "chennai", "gurgaon", "noida", "warszawa", "warsaw", "krakow",
   "united kingdom", " uk", "london", "canada", "toronto", "vancouver",
   "germany", "berlin", "munich", "france", "paris", "singapore",
   "australia", "sydney", "melbourne", "brazil", "mexico", "netherlands",
   "amsterdam", "spain", "madrid", "israel", "tel aviv", "ireland",
   "dublin", "poland", "portugal", "lisbon", "philippines", "manila",
   "japan", "tokyo", "china", "pakistan", "nigeria", "south africa",
+  "south korea", "seoul", "vietnam", "indonesia", "jakarta", "thailand",
+  "malaysia", "kuala lumpur", "turkey", "istanbul", "romania", "bucharest",
+  "czech", "prague", "hungary", "budapest", "sweden", "stockholm",
+  "denmark", "copenhagen", "norway", "oslo", "finland", "helsinki",
+  "switzerland", "zurich", "austria", "vienna", "belgium", "brussels",
   "uae", "dubai", "argentina", "colombia", "chile", "italy", "milan",
 ];
 
@@ -119,11 +125,14 @@ function stripHtml(html) {
   return text.replace(/\s+/g, " ").trim();
 }
 
-async function fetchJd(url, locationFilter) {
+// Each ATS branch returns the same normalized shape -- {text, place, country,
+// isRemote} -- and assessLocation() makes the one decision. Keeping the
+// judgment in a single place matters: when each platform carried its own
+// ad-hoc isForeign expression, they silently diverged (a Poland role marked
+// "remote" and a "Bengaluru" spelling both slipped through in one day).
+async function fetchJd(url) {
   const u = new URL(url);
   const parts = u.pathname.split("/").filter(Boolean);
-  const markers = locationFilter.foreignMarkers || DEFAULT_FOREIGN_MARKERS;
-  const allowed = (locationFilter.allowedCountry || "US").toUpperCase();
 
   if (u.hostname.includes("lever.co")) {
     const [company, id] = parts;
@@ -131,8 +140,11 @@ async function fetchJd(url, locationFilter) {
     if (d.ok === false) return null;
     return {
       text: d.descriptionPlain || stripHtml(d.description),
-      location: `${d.country || "?"} (${d.workplaceType || "?"})`,
-      isForeign: !!d.country && d.country.toUpperCase() !== allowed && d.workplaceType !== "remote",
+      // Lever exposes no city, only a country code -- so the commute check
+      // can't apply to these; they fall through to your manual review.
+      place: d.country || "",
+      country: d.country || "",
+      isRemote: (d.workplaceType || "").toLowerCase() === "remote",
     };
   }
   if (u.hostname.includes("greenhouse.io")) {
@@ -141,11 +153,12 @@ async function fetchJd(url, locationFilter) {
     const res = await fetch(`https://boards-api.greenhouse.io/v1/boards/${company}/jobs/${id}?content=true`);
     if (!res.ok) return null;
     const d = await res.json();
-    const loc = (d.location?.name || "").toLowerCase();
+    const place = d.location?.name || "";
     return {
       text: stripHtml(d.content),
-      location: d.location?.name || "",
-      isForeign: !loc.includes("remote") && markers.some((m) => loc.includes(m)),
+      place,
+      country: "", // free text only
+      isRemote: place.toLowerCase().includes("remote"),
     };
   }
   if (u.hostname.includes("ashbyhq.com")) {
@@ -155,13 +168,13 @@ async function fetchJd(url, locationFilter) {
     const d = await res.json();
     const job = d.jobs?.find((j) => u.pathname.includes(j.jobUrl.split("/").pop())) || null;
     if (!job) return null;
-    const loc = (job.location || "").toLowerCase();
     return {
       text: job.descriptionPlain,
-      location: `${job.location || ""} (${job.workplaceType || "?"})`,
+      place: job.location || "",
+      country: "",
       // isRemote is unreliable -- Ashby marks hybrid roles isRemote:true too
-      // (e.g. a Milan, Italy hybrid posting). workplaceType is the real signal.
-      isForeign: job.workplaceType?.toLowerCase() !== "remote" && markers.some((m) => loc.includes(m)),
+      // (seen: a Milan, Italy hybrid posting). workplaceType is the real signal.
+      isRemote: (job.workplaceType || "").toLowerCase() === "remote",
     };
   }
   if (u.hostname.includes("smartrecruiters.com")) {
@@ -178,12 +191,11 @@ async function fetchJd(url, locationFilter) {
         .join(" ")
     );
     const l = d.location || {};
-    // SmartRecruiters gives structured country/remote/hybrid, so no keyword
-    // guessing needed here -- this is the most reliable location of any ATS.
     return {
       text,
-      location: `${l.fullLocation || "?"} (${l.remote ? "remote" : l.hybrid ? "hybrid" : "onsite"})`,
-      isForeign: !!l.country && l.country.toUpperCase() !== allowed && !l.remote,
+      place: l.fullLocation || "",
+      country: l.country || "",
+      isRemote: !!l.remote,
     };
   }
   if (u.hostname.includes("workable.com")) {
@@ -195,14 +207,46 @@ async function fetchJd(url, locationFilter) {
     });
     if (!res.ok) return null;
     const d = await res.json();
-    const text = stripHtml([d.description, d.requirements, d.benefits].filter(Boolean).join(" "));
-    const code = d.location?.countryCode || "";
     return {
-      text,
-      location: `${[d.location?.city, d.location?.country].filter(Boolean).join(", ") || "?"} (${d.remote ? "remote" : "onsite"})`,
-      isForeign: !!code && code.toUpperCase() !== allowed && !d.remote,
+      text: stripHtml([d.description, d.requirements, d.benefits].filter(Boolean).join(" ")),
+      place: [d.location?.city, d.location?.region, d.location?.country].filter(Boolean).join(", "),
+      country: d.location?.countryCode || "",
+      isRemote: !!d.remote,
     };
   }
+  return null;
+}
+
+// Returns null to keep the lead, or a reason string to auto-pass it.
+function assessLocation(jd, cfg) {
+  if (!cfg.enabled) return null;
+  const allowed = (cfg.allowedCountry || "US").toUpperCase();
+  const markers = cfg.foreignMarkers || DEFAULT_FOREIGN_MARKERS;
+  const commutable = cfg.commutableMarkers || [];
+  const place = (jd.place || "").toLowerCase();
+
+  // 1. Wrong country. A structured country code is authoritative; note that
+  //    "remote" is NOT an exemption here -- a Warsaw-based remote role means
+  //    remote-within-Poland, not US-eligible.
+  if (jd.country) {
+    if (jd.country.toUpperCase() !== allowed) return `country: ${jd.country}`;
+  } else if (markers.some((m) => place.includes(m))) {
+    // Free-text fallback. Don't flag if the text also names the allowed
+    // country -- "Remote - US, UK or Canada" is open to you.
+    const allowedIndicators = cfg.allowedCountryIndicators || ["united states", "usa", " us", "us-", "u.s."];
+    if (!allowedIndicators.some((m) => place.includes(m))) return `foreign location: ${jd.place}`;
+  }
+
+  // 2. Right country, but not commutable. Only applies to non-remote roles,
+  //    and only when the location is specific enough to judge -- a bare
+  //    "United States (hybrid)" names no city, so leave it for manual review
+  //    rather than guessing.
+  if (!jd.isRemote && commutable.length && place) {
+    const isSpecific = place.includes(",");
+    const isNearby = commutable.some((m) => place.includes(m));
+    if (isSpecific && !isNearby) return `not commutable: ${jd.place}`;
+  }
+
   return null;
 }
 
@@ -249,7 +293,7 @@ async function main() {
     const now = new Date().toISOString();
     let jd;
     try {
-      jd = await fetchJd(row.url, config.locationFilter);
+      jd = await fetchJd(row.url);
     } catch (e) {
       jd = null;
     }
@@ -261,14 +305,15 @@ async function main() {
       outcome = "fetch failed";
     } else {
       row.snippet = jd.text.slice(0, 800);
-      row.location = jd.location;
+      row.location = `${jd.place || "?"} (${jd.isRemote ? "remote" : "onsite/hybrid"})`;
       row.classified_at = now;
       enriched++;
 
-      if (config.locationFilter.enabled && jd.isForeign) {
-        appendDecision(paths.decisions, row.fingerprint, row.company, "pass", "auto_location_mismatch", `location: ${jd.location}`);
+      const locationReason = assessLocation(jd, config.locationFilter);
+      if (locationReason) {
+        appendDecision(paths.decisions, row.fingerprint, row.company, "pass", "auto_location_mismatch", locationReason);
         locationRejected++;
-        outcome = "location mismatch";
+        outcome = `location mismatch (${locationReason})`;
       } else {
         llmCalls++;
         const verdict = await classifyFit(jd.text, criteria, config.model);

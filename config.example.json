@@ -19,9 +19,11 @@
   "knownCompaniesFile": null,
 
   "//locationFilter": "Free pre-filter that runs before any LLM call. Set enabled:false to skip it.",
+  "//commutableMarkers": "Optional. If set, non-remote roles whose location names a specific city NOT in this list get filtered. Vague locations (no comma, e.g. 'United States') are never filtered -- too risky to guess.",
   "locationFilter": {
     "enabled": true,
-    "allowedCountry": "US"
+    "allowedCountry": "US",
+    "commutableMarkers": ["san francisco", "bay area", "palo alto", "oakland", "san jose"]
   },
 
   "reasonLabels": {
