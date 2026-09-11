@@ -221,6 +221,79 @@ async function fetchJd(url) {
   return null;
 }
 
+function normalize(text) {
+  return (text || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+// A company board / department index URL rather than one posting. These show
+// up in title searches because the searched title appears *somewhere* on the
+// board -- so they're a pointer to real openings, not noise, and get expanded
+// into individual postings rather than discarded.
+function isBoardUrl(url) {
+  const u = new URL(url);
+  const host = u.hostname.toLowerCase();
+  const parts = u.pathname.split("/").filter(Boolean);
+  if (host.includes("lever.co") || host.includes("ashbyhq.com")) return parts.length < 2;
+  if (host.includes("greenhouse.io")) return !parts.includes("jobs") || parts.length < 3;
+  if (host.includes("smartrecruiters.com")) return parts.length < 2;
+  if (host.includes("workable.com")) return !parts.includes("j");
+  return false;
+}
+
+// Every posting on a company's board, as {title, url}.
+async function fetchBoard(url) {
+  const u = new URL(url);
+  const host = u.hostname.toLowerCase();
+  const company = u.pathname.split("/").filter(Boolean)[0];
+  if (!company) return [];
+  try {
+    if (host.includes("ashbyhq.com")) {
+      const d = await (await fetch(`https://api.ashbyhq.com/posting-api/job-board/${company}`)).json();
+      return (d.jobs || []).map((j) => ({ title: j.title, url: j.jobUrl }));
+    }
+    if (host.includes("greenhouse.io")) {
+      const d = await (await fetch(`https://boards-api.greenhouse.io/v1/boards/${company}/jobs`)).json();
+      return (d.jobs || []).map((j) => ({ title: j.title, url: j.absolute_url }));
+    }
+    if (host.includes("lever.co")) {
+      const d = await (await fetch(`https://api.lever.co/v0/postings/${company}?mode=json`)).json();
+      return (Array.isArray(d) ? d : []).map((j) => ({ title: j.text, url: j.hostedUrl }));
+    }
+    if (host.includes("smartrecruiters.com")) {
+      const d = await (await fetch(`https://api.smartrecruiters.com/v1/companies/${company}/postings`)).json();
+      return (d.content || []).map((j) => ({
+        title: j.name,
+        url: `https://jobs.smartrecruiters.com/${company}/${j.id}`,
+      }));
+    }
+    if (host.includes("workable.com")) {
+      const d = await (await fetch(`https://apply.workable.com/api/v1/widget/accounts/${company}`)).json();
+      return (d.jobs || []).map((j) => ({
+        title: j.title,
+        url: `https://apply.workable.com/${company}/j/${j.shortcode}`,
+      }));
+    }
+  } catch {
+    return [];
+  }
+  return [];
+}
+
+// Which board postings are worth pulling in. Matches the configured titles,
+// plus each one minus its leading seniority word ("Staff Product Manager" ->
+// "Product Manager"), so a board's "Growth Product Manager" still gets picked
+// up. Anything off-target still has to clear the criteria filter afterward.
+function titleMatchers(titles) {
+  const set = new Set();
+  for (const t of titles) {
+    const lower = t.toLowerCase();
+    set.add(lower);
+    const rest = lower.split(/\s+/).slice(1).join(" ");
+    if (rest.split(/\s+/).length >= 2) set.add(rest);
+  }
+  return [...set];
+}
+
 // Common country-name spellings -> ISO-ish code. Only the allowed country
 // needs exact mapping; everything else just needs to not equal it.
 function countryToCode(name) {
@@ -337,6 +410,43 @@ async function main() {
 
   const rows = readTsv(paths.seen, SEEN_COLUMNS);
   const decided = new Set(readTsv(paths.decisions, DECISION_COLUMNS).map((d) => d.fingerprint));
+
+  // Expand any board/index URLs into the individual postings they point at,
+  // before classifying. A board URL surfaced in a title search because a
+  // matching title exists on it -- discarding it would throw away real leads.
+  const matchers = titleMatchers(config.titles || []);
+  const knownFps = new Set(rows.map((r) => r.fingerprint));
+  const today = new Date().toISOString().slice(0, 10);
+  let expandedBoards = 0, expandedInto = 0;
+
+  for (const row of rows) {
+    if (row.classified_at || decided.has(row.fingerprint) || !isBoardUrl(row.url)) continue;
+    const postings = await fetchBoard(row.url);
+    const matches = postings.filter((p) =>
+      p.title && p.url && matchers.some((m) => p.title.toLowerCase().includes(m))
+    );
+    for (const p of matches) {
+      const fp = `${normalize(row.company)}|${normalize(p.title)}`;
+      if (knownFps.has(fp)) continue;
+      knownFps.add(fp);
+      rows.push({
+        fingerprint: fp, first_seen: today, last_seen: today,
+        company: row.company, title: p.title, url: p.url,
+        snippet: "", posted_at: "", location: "", classified_at: "",
+      });
+      expandedInto++;
+    }
+    row.classified_at = new Date().toISOString();
+    appendDecision(paths.decisions, row.fingerprint, row.company, "pass", "auto_board_expanded",
+      `board URL; expanded into ${matches.length} matching posting(s)`);
+    decided.add(row.fingerprint);
+    expandedBoards++;
+  }
+  if (expandedBoards) {
+    writeTsv(paths.seen, SEEN_COLUMNS, rows);
+    console.log(`Expanded ${expandedBoards} board URL(s) into ${expandedInto} posting(s)`);
+  }
+
   const todo = rows.filter((r) => !r.classified_at && !decided.has(r.fingerprint)).slice(0, limit);
 
   console.log(`${todo.length} lead(s) to classify`);
