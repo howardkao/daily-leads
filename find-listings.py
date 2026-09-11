@@ -85,6 +85,26 @@ def normalize(text: str) -> str:
     return re.sub(r"[^a-z0-9]", "", text.lower())
 
 
+def is_individual_posting(url: str) -> bool:
+    """Reject company board / department index URLs. These match title
+    searches and look like leads, but there's no single job behind them --
+    nothing to fetch, classify, or apply to. Seen in the wild as
+    jobs.ashbyhq.com/{co}?device_id=... and .../{co}?departmentId=..."""
+    parsed = urllib.parse.urlparse(url)
+    host = parsed.netloc.lower()
+    parts = [p for p in parsed.path.split("/") if p]
+
+    if "lever.co" in host or "ashbyhq.com" in host:
+        return len(parts) >= 2  # /{company}/{job-id}
+    if "greenhouse.io" in host:
+        return "jobs" in parts and len(parts) >= 3  # /{company}/jobs/{id}
+    if "smartrecruiters.com" in host:
+        return len(parts) >= 2  # /{Company}/{id}-{slug}
+    if "workable.com" in host:
+        return "j" in parts  # /{account}/j/{code}
+    return True
+
+
 def extract_company_slug(url: str) -> str:
     """Pull the company slug out of the ATS URL path -- more reliable than
     parsing result titles, since every supported ATS embeds it directly."""
@@ -232,6 +252,8 @@ def main() -> int:
                 snippet = item.get("snippet", "").strip().replace("\n", " ").replace("\t", " ")
                 posted_at = resolve_posted_at(item.get("date", ""), fetched_at)
                 if not link or not result_title:
+                    continue
+                if not is_individual_posting(link):
                     continue
 
                 company_slug = extract_company_slug(link)

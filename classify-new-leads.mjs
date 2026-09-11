@@ -168,10 +168,14 @@ async function fetchJd(url) {
     const d = await res.json();
     const job = d.jobs?.find((j) => u.pathname.includes(j.jobUrl.split("/").pop())) || null;
     if (!job) return null;
+    // address.postalAddress carries a structured country -- far more reliable
+    // than keyword-matching the free-text location, which is what previously
+    // let "Auckland" and "Hybrid - Porto" through.
+    const addr = job.address?.postalAddress || {};
     return {
       text: job.descriptionPlain,
-      place: job.location || "",
-      country: "",
+      place: [addr.addressLocality, addr.addressRegion, addr.addressCountry].filter(Boolean).join(", ") || job.location || "",
+      country: countryToCode(addr.addressCountry),
       // isRemote is unreliable -- Ashby marks hybrid roles isRemote:true too
       // (seen: a Milan, Italy hybrid posting). workplaceType is the real signal.
       isRemote: (job.workplaceType || "").toLowerCase() === "remote",
@@ -217,34 +221,83 @@ async function fetchJd(url) {
   return null;
 }
 
+// Common country-name spellings -> ISO-ish code. Only the allowed country
+// needs exact mapping; everything else just needs to not equal it.
+function countryToCode(name) {
+  if (!name) return "";
+  const n = name.trim().toLowerCase();
+  if (["united states", "united states of america", "usa", "us", "u.s.", "u.s.a."].includes(n)) return "US";
+  return name.trim().toUpperCase().slice(0, 2) === "US" ? "XX" : name.trim();
+}
+
+// US state names + postal codes, used as positive evidence that a free-text
+// location is domestic. Positive evidence is the right question to ask: a
+// denylist of foreign cities is unbounded and always has holes (Bengaluru,
+// Warszawa, Porto, Auckland all slipped through one), whereas "does this
+// name a US state?" is a closed set.
+const US_STATES = [
+  "alabama","alaska","arizona","arkansas","california","colorado","connecticut","delaware",
+  "florida","georgia","hawaii","idaho","illinois","indiana","iowa","kansas","kentucky",
+  "louisiana","maine","maryland","massachusetts","michigan","minnesota","mississippi",
+  "missouri","montana","nebraska","nevada","new hampshire","new jersey","new mexico",
+  "new york","north carolina","north dakota","ohio","oklahoma","oregon","pennsylvania",
+  "rhode island","south carolina","south dakota","tennessee","texas","utah","vermont",
+  "virginia","washington","west virginia","wisconsin","wyoming","district of columbia",
+];
+const US_STATE_CODES = [
+  "al","ak","az","ar","ca","co","ct","de","fl","ga","hi","id","il","in","ia","ks","ky","la",
+  "me","md","ma","mi","mn","ms","mo","mt","ne","nv","nh","nj","nm","ny","nc","nd","oh","ok",
+  "or","pa","ri","sc","sd","tn","tx","ut","vt","va","wa","wv","wi","wy","dc",
+];
+
+function looksDomestic(place) {
+  if (/\b(united states|usa|u\.s\.a?\.)\b/.test(place)) return true;
+  if (US_STATES.some((s) => place.includes(s))) return true;
+  // Two-letter codes only count right after a comma ("Austin, TX") so we
+  // don't match random letter pairs inside city names.
+  return US_STATE_CODES.some((c) => new RegExp(`,\\s*${c}\\b`).test(place));
+}
+
+// A location that names no actual place -- country-level or remote-only.
+// These get left for manual review rather than guessed at.
+function isVaguePlace(place) {
+  const stripped = place
+    .replace(/\(.*?\)/g, " ")
+    .replace(/\b(remote|hybrid|onsite|on-site|based|anywhere|global|worldwide|flexible)\b/g, " ")
+    .replace(/\b(united states|usa|u\.s\.a?\.|us)\b/g, " ")
+    .replace(/[^a-z]/g, "");
+  return stripped.length === 0;
+}
+
 // Returns null to keep the lead, or a reason string to auto-pass it.
 function assessLocation(jd, cfg) {
   if (!cfg.enabled) return null;
   const allowed = (cfg.allowedCountry || "US").toUpperCase();
-  const markers = cfg.foreignMarkers || DEFAULT_FOREIGN_MARKERS;
   const commutable = cfg.commutableMarkers || [];
   const place = (jd.place || "").toLowerCase();
 
-  // 1. Wrong country. A structured country code is authoritative; note that
-  //    "remote" is NOT an exemption here -- a Warsaw-based remote role means
-  //    remote-within-Poland, not US-eligible.
-  if (jd.country) {
-    if (jd.country.toUpperCase() !== allowed) return `country: ${jd.country}`;
-  } else if (markers.some((m) => place.includes(m))) {
-    // Free-text fallback. Don't flag if the text also names the allowed
-    // country -- "Remote - US, UK or Canada" is open to you.
-    const allowedIndicators = cfg.allowedCountryIndicators || ["united states", "usa", " us", "us-", "u.s."];
-    if (!allowedIndicators.some((m) => place.includes(m))) return `foreign location: ${jd.place}`;
+  // 1. Structured country is authoritative when we have it. Note "remote" is
+  //    NOT an exemption -- a Warsaw-based remote role means remote-within-
+  //    Poland, not US-eligible.
+  if (jd.country && jd.country.toUpperCase() !== allowed) {
+    return `country: ${jd.country}`;
   }
 
-  // 2. Right country, but not commutable. Only applies to non-remote roles,
-  //    and only when the location is specific enough to judge -- a bare
-  //    "United States (hybrid)" names no city, so leave it for manual review
-  //    rather than guessing.
-  if (!jd.isRemote && commutable.length && place) {
-    const isSpecific = place.includes(",");
-    const isNearby = commutable.some((m) => place.includes(m));
-    if (isSpecific && !isNearby) return `not commutable: ${jd.place}`;
+  if (!place) return null; // nothing to judge on
+
+  const nearby = commutable.some((m) => place.includes(m));
+  if (nearby) return null;
+
+  // 2. No structured country: require positive evidence it's domestic.
+  //    Anything specific that shows no US signal is treated as foreign.
+  if (!jd.country && !looksDomestic(place) && !isVaguePlace(place)) {
+    return `not clearly in ${allowed}: ${jd.place}`;
+  }
+
+  // 3. Domestic (or assumed so) but not commutable. Remote roles are exempt,
+  //    and vague locations that name no city are left for manual review.
+  if (!jd.isRemote && commutable.length && !isVaguePlace(place)) {
+    return `not commutable: ${jd.place}`;
   }
 
   return null;
